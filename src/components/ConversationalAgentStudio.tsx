@@ -20,6 +20,12 @@ import {
   ChevronRight,
   ArrowLeft,
   ArrowRight,
+  Activity,
+  Wrench,
+  FileText,
+  Cloud,
+  Github,
+  RefreshCw,
 } from "lucide-react";
 import {
   McpToolDefinition,
@@ -115,11 +121,220 @@ Select one of the presets below or describe your custom request in the chat:`,
   const [finalRepoUrl, setFinalRepoUrl] = useState<string | null>(null);
   const [copiedConfig, setCopiedConfig] = useState(false);
 
+  // Operational Log Retrieval & Automated Diagnostic States
+  const [isInspectingLogs, setIsInspectingLogs] = useState(false);
+  const [activeLogTab, setActiveLogTab] = useState<"cloudflare" | "github">("cloudflare");
+  const [githubLogs, setGithubLogs] = useState<{
+    repo?: string;
+    commits?: { sha: string; message: string; author: string; date: string }[];
+    workflowRuns?: { id: number; name: string; status: string; conclusion: string; html_url: string }[];
+    error?: string;
+  } | null>(null);
+  const [cloudflareLogs, setCloudflareLogs] = useState<{
+    scriptName?: string;
+    healthUrl?: string;
+    liveHealth?: { statusCode?: number; statusText?: string; ok: boolean; body?: any; error?: string };
+    deployments?: any[];
+    error?: string;
+  } | null>(null);
+  const [showLogViewer, setShowLogViewer] = useState(false);
+  const [diagnosticsResult, setDiagnosticsResult] = useState<{
+    status: "healthy" | "warning" | "error";
+    summary: string;
+    suggestedFix?: string;
+    actionType?: "redeploy" | "hardcode_and_redeploy" | "check_tokens";
+  } | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, deploySteps]);
+  }, [messages, deploySteps, showLogViewer, diagnosticsResult]);
+
+  // Operational Log Inspector Function
+  const fetchOperationalLogs = async (target: "both" | "github" | "cloudflare" = "both") => {
+    setIsInspectingLogs(true);
+    let ghData: any = null;
+    let cfData: any = null;
+
+    try {
+      // 1. Fetch GitHub Logs if token present
+      if ((target === "both" || target === "github") && credentials.githubToken) {
+        try {
+          const ghRes = await fetch("/api/agent/logs/github", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              githubToken: credentials.githubToken,
+              repoName: credentials.repoName || "personal-mcp-bridge",
+            }),
+          });
+          ghData = await ghRes.json().catch(() => null);
+          if (ghRes.ok && ghData?.success) {
+            setGithubLogs(ghData);
+          } else {
+            setGithubLogs({ error: ghData?.error || `HTTP ${ghRes.status}` });
+          }
+        } catch (e: any) {
+          // Direct client fallback if running statically on Pages
+          try {
+            const cleanRepo = (credentials.repoName || "personal-mcp-bridge").toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+            const uRes = await fetch("https://api.github.com/user", {
+              headers: { Authorization: `Bearer ${credentials.githubToken}` },
+            });
+            if (uRes.ok) {
+              const u = await uRes.json();
+              const cRes = await fetch(`https://api.github.com/repos/${u.login}/${cleanRepo}/commits?per_page=5`, {
+                headers: { Authorization: `Bearer ${credentials.githubToken}` },
+              });
+              const c = cRes.ok ? await cRes.json() : [];
+              ghData = {
+                repo: `${u.login}/${cleanRepo}`,
+                commits: Array.isArray(c) ? c.map((item: any) => ({
+                  sha: item.sha?.substring(0, 7),
+                  message: item.commit?.message,
+                  author: item.commit?.author?.name,
+                  date: item.commit?.author?.date,
+                })) : [],
+              };
+              setGithubLogs(ghData);
+            }
+          } catch (directErr: any) {
+            setGithubLogs({ error: e.message || "Failed to fetch GitHub logs" });
+          }
+        }
+      }
+
+      // 2. Fetch Cloudflare Logs if token present
+      if ((target === "both" || target === "cloudflare") && credentials.cloudflareToken && credentials.cloudflareAccountId) {
+        try {
+          const cfRes = await fetch("/api/agent/logs/cloudflare", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              cloudflareToken: credentials.cloudflareToken,
+              cloudflareAccountId: credentials.cloudflareAccountId,
+              scriptName: credentials.workerName || "mcp-api-bridge-worker",
+            }),
+          });
+          cfData = await cfRes.json().catch(() => null);
+          if (cfRes.ok && cfData?.success) {
+            setCloudflareLogs(cfData);
+          } else {
+            setCloudflareLogs({ error: cfData?.error || `HTTP ${cfRes.status}` });
+          }
+        } catch (cfErr: any) {
+          setCloudflareLogs({ error: cfErr.message || "Failed to fetch Cloudflare logs" });
+        }
+      }
+
+      // 3. Automated Error Detection & Diagnosis Engine
+      const errorsDetected: string[] = [];
+      let fixPlan: {
+        summary: string;
+        suggestedFix?: string;
+        actionType?: "redeploy" | "hardcode_and_redeploy" | "check_tokens";
+      } | null = null;
+
+      if (cfData?.liveHealth && !cfData.liveHealth.ok) {
+        errorsDetected.push(`Worker health endpoint returned HTTP ${cfData.liveHealth.statusCode || 'Unreachable'}: ${cfData.liveHealth.error || cfData.liveHealth.statusText || 'Offline'}`);
+      }
+
+      if (ghData?.workflowRuns?.some((r: any) => r.conclusion === "failure")) {
+        errorsDetected.push("GitHub Action CI/CD workflow failed on the latest commit.");
+      }
+
+      if (cfData?.error) {
+        errorsDetected.push(`Cloudflare API: ${cfData.error}`);
+      }
+      if (ghData?.error) {
+        errorsDetected.push(`GitHub API: ${ghData.error}`);
+      }
+
+      if (errorsDetected.length > 0) {
+        const isAuthIssue = errorsDetected.some(e => e.toLowerCase().includes("auth") || e.toLowerCase().includes("token") || e.includes("401") || e.includes("403"));
+        const isSecretOrDeployIssue = errorsDetected.some(e => e.toLowerCase().includes("deploy") || e.toLowerCase().includes("health") || e.includes("500"));
+
+        if (isAuthIssue) {
+          fixPlan = {
+            summary: lang === "fa" ? "ایراد در احراز هویت توکن‌های گیت‌هاب یا کلودفلر شناسایی شد." : "Authentication or permission issue detected in tokens.",
+            suggestedFix: lang === "fa" ? "توکن‌های شما دسترسی کامل (Full Access) یا دسترسی repo و workers:edit ندارند. لطفاً توکن‌ها را در پنل کلیدها بررسی کنید." : "Check your GitHub and Cloudflare tokens permissions.",
+            actionType: "check_tokens",
+          };
+        } else if (isSecretOrDeployIssue) {
+          fixPlan = {
+            summary: lang === "fa" ? "ایراد در پاسخ‌دهی ورکر یا متغیرهای محرمانه یافت شد." : "Worker runtime or secret configuration issue detected.",
+            suggestedFix: lang === "fa" ? "راهکار خودکار: ساخت مخزن خصوصی (Private) با هاردکد مستقیم توکن‌ها و دیپلوی فوری ورکر روی کلودفلر بدون وابستگی به متغیرهای محرمانه خارجی." : "Auto fix: Deploy private repo with embedded secrets to Cloudflare.",
+            actionType: "hardcode_and_redeploy",
+          };
+        } else {
+          fixPlan = {
+            summary: lang === "fa" ? `خطای شناسایی شده: ${errorsDetected[0]}` : `Issue: ${errorsDetected[0]}`,
+            suggestedFix: lang === "fa" ? "اجرای مجدد کامپایل و دیپلوی خودکار ورکر" : "Trigger auto re-deploy",
+            actionType: "redeploy",
+          };
+        }
+
+        setDiagnosticsResult({
+          status: "error",
+          summary: fixPlan.summary,
+          suggestedFix: fixPlan.suggestedFix,
+          actionType: fixPlan.actionType,
+        });
+
+        // Add assistant chat message with findings
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: "diag-" + Date.now(),
+            sender: "agent",
+            text: lang === "fa"
+              ? `🔍 **گزارش خواندن لاگ‌ها از دو طرف (گیت‌هاب و کلودفلر):**\n\n⚠️ **ایراد پیدا شد:** ${fixPlan?.summary}\n\n🛠️ **راهکار رفع خودکار:** ${fixPlan?.suggestedFix}`
+              : `🔍 **Logs Inspection Report (GitHub & Cloudflare):**\n\n⚠️ **Issue Found:** ${fixPlan?.summary}\n\n🛠️ **Suggested Fix:** ${fixPlan?.suggestedFix}`,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            quickActions: [
+              {
+                label: lang === "fa" ? "⚡ رفع خودکار ایراد و دیپلوی مجدد" : "⚡ Auto Fix & Redeploy",
+                action: handleRunDeploy,
+                primary: true,
+              },
+              {
+                label: lang === "fa" ? "📋 مشاهده جزئیات لاگ‌ها" : "📋 View Detailed Logs",
+                action: () => setShowLogViewer(true),
+              },
+            ],
+          },
+        ]);
+      } else {
+        setDiagnosticsResult({
+          status: "healthy",
+          summary: lang === "fa" ? "همه سیستم‌ها، لاگ‌های آخرین کامیت گیت‌هاب و وضعیت ورکر کلودفلر در وضعیت سالم (Healthy) هستند." : "All GitHub and Cloudflare logs and endpoints are completely healthy!",
+        });
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            id: "diag-ok-" + Date.now(),
+            sender: "agent",
+            text: lang === "fa"
+              ? `✅ **بررسی لاگ‌های هر دو طرف انجام شد:**\n• مخزن و کامیت‌های گیت‌هاب با موفقیت ثبت شده‌اند.\n• وضعیت ورکر در کلودفلر فعال و پاسخگوی درخواست‌هاست.\nهیچ ایرادی در عملکرد شناسایی نشد.`
+              : `✅ **Operational Logs Checked:** GitHub commits and Cloudflare Worker endpoints are all active and healthy.`,
+            timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+            quickActions: [
+              {
+                label: lang === "fa" ? "📋 پنل لاگ‌ها" : "📋 Logs Panel",
+                action: () => setShowLogViewer(true),
+              },
+            ],
+          },
+        ]);
+      }
+    } catch (e: any) {
+      console.error("Log inspection error:", e);
+    } finally {
+      setIsInspectingLogs(false);
+    }
+  };
 
   // Determine current pipeline stage (1 to 4)
   const currentStep = finalDeployedUrl
@@ -205,6 +420,34 @@ Wraps your AI endpoints with secret token injection into standard MCP tools.`;
         timestamp: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
       },
     ]);
+
+    const lowerText = userText.toLowerCase();
+
+    // Check for operational direct directives (deploy, read logs, check error, fix)
+    const isDeployDirective =
+      lowerText.includes("دیپلوی") ||
+      lowerText.includes("deploy") ||
+      lowerText.includes("مستقر کن") ||
+      lowerText.includes("استقرار");
+
+    const isLogOrDebugDirective =
+      lowerText.includes("لاگ") ||
+      lowerText.includes("log") ||
+      lowerText.includes("ایراد") ||
+      lowerText.includes("خطا") ||
+      lowerText.includes("رفع") ||
+      lowerText.includes("بررسی کن") ||
+      lowerText.includes("چک کن");
+
+    if (isDeployDirective) {
+      setTimeout(() => {
+        handleRunDeploy();
+      }, 500);
+    } else if (isLogOrDebugDirective) {
+      setTimeout(() => {
+        fetchOperationalLogs("both");
+      }, 500);
+    }
 
     setLoading(true);
 
@@ -397,6 +640,7 @@ Wraps your AI endpoints with secret token injection into standard MCP tools.`;
           "running"
         );
 
+        const isPrivate = credentials.isPrivate !== false;
         const ghRes = await fetch("/api/github/deploy-repo", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -404,7 +648,7 @@ Wraps your AI endpoints with secret token injection into standard MCP tools.`;
             githubToken: credentials.githubToken,
             repoName: credentials.repoName || "personal-mcp-bridge",
             description: "SHΞN™ Serverless Model Context Protocol (MCP) Bridge Worker",
-            isPrivate: false,
+            isPrivate,
             files,
           }),
         });

@@ -38,6 +38,8 @@ export default function App() {
       geminiToken: "",
       repoName: "personal-mcp-bridge",
       workerName: "mcp-api-bridge-worker",
+      isPrivate: true,
+      hardcodeSecrets: true,
     };
   });
 
@@ -62,10 +64,10 @@ export default function App() {
     }
   };
 
-  // Generate repository files dynamically whenever tools, tunnel config, or preset changes
+  // Generate repository files dynamically whenever tools, tunnel config, preset, or credentials change
   const repoFiles = useMemo(() => {
-    return generateRepoFiles(tools, tunnelConfig, activePreset);
-  }, [tools, tunnelConfig, activePreset]);
+    return generateRepoFiles(tools, tunnelConfig, activePreset, credentials);
+  }, [tools, tunnelConfig, activePreset, credentials]);
 
   return (
     <div

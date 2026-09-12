@@ -1,4 +1,4 @@
-import { McpToolDefinition, CloudflareTunnelConfig, RepoFile, ArchitecturePreset } from "../types";
+import { McpToolDefinition, CloudflareTunnelConfig, RepoFile, ArchitecturePreset, UserCredentials } from "../types";
 
 export const githubTools: McpToolDefinition[] = [
   {
@@ -408,9 +408,15 @@ export const defaultTunnelConfig: CloudflareTunnelConfig = {
 export function generateRepoFiles(
   tools: McpToolDefinition[],
   tunnel: CloudflareTunnelConfig,
-  preset: ArchitecturePreset = "github"
+  preset: ArchitecturePreset = "github",
+  credentials?: UserCredentials
 ): RepoFile[] {
   const toolsCode = generateToolsTypeScript(tools);
+
+  // If repo is private and hardcoding is enabled, inject tokens directly into the worker code for fastest zero-config deployment
+  const shouldHardcode = credentials?.isPrivate !== false && credentials?.hardcodeSecrets !== false;
+  const hardcodedGh = shouldHardcode && credentials?.githubToken ? credentials.githubToken : "";
+  const hardcodedAi = shouldHardcode && credentials?.geminiToken ? credentials.geminiToken : "";
 
   return [
     {
@@ -733,117 +739,7 @@ async function handleJsonRpc(req: any, env: Env): Promise<any> {
       filename: "target.ts",
       category: "source",
       language: "typescript",
-      content: `/**
- * Target API & Tunnel Dispatcher Middleware
- * Seamlessly routes requests to GitHub API, Third-Party AI Services,
- * or Internal Zero Trust Tunnels, securely injecting API tokens on Cloudflare Edge.
- */
-
-import { Env } from "../types";
-
-export interface TargetRequestOptions {
-  path: string;
-  method: string;
-  targetBaseUrl?: string;
-  authSecretName?: string;
-  headers?: Record<string, string>;
-  body?: any;
-  params?: Record<string, any>;
-}
-
-export async function forwardToTarget(options: TargetRequestOptions, env: Env): Promise<any> {
-  // Determine destination: direct SaaS (GitHub / AI) or Cloudflare Tunnel
-  const baseUrl = options.targetBaseUrl || env.TUNNEL_BASE_URL;
-  if (!baseUrl) {
-    throw new Error("No targetBaseUrl specified and TUNNEL_BASE_URL is not configured in worker environment.");
-  }
-
-  // Construct final URL with path parameter substitutions
-  let targetPath = options.path;
-  const remainingParams = { ...(options.params || {}) };
-
-  // Replace {paramName} in path (e.g. /repos/{owner}/{repo} -> /repos/octocat/Hello-World)
-  if (options.params) {
-    for (const [key, value] of Object.entries(options.params)) {
-      const placeholder = \`{\${key}}\`;
-      if (targetPath.includes(placeholder)) {
-        targetPath = targetPath.replace(placeholder, encodeURIComponent(String(value)));
-        delete remainingParams[key];
-      }
-    }
-  }
-
-  const targetUrl = new URL(targetPath, baseUrl);
-
-  // If GET/DELETE, append remaining parameters as query string
-  if (options.method === "GET" || options.method === "DELETE") {
-    for (const [key, val] of Object.entries(remainingParams)) {
-      if (val !== undefined && val !== null) {
-        targetUrl.searchParams.append(key, String(val));
-      }
-    }
-  }
-
-  // Base Headers
-  const requestHeaders: Record<string, string> = {
-    "User-Agent": "Cloudflare-Worker-MCP-Bridge/1.0",
-    ...(options.headers || {}),
-  };
-
-  // 1. Inject API Token from Cloudflare Worker Secrets
-  if (options.authSecretName) {
-    const secretValue = (env as any)[options.authSecretName];
-    if (secretValue) {
-      // GitHub standard or Bearer standard
-      requestHeaders["Authorization"] = \`Bearer \${secretValue}\`;
-    }
-  } else if (env.TARGET_API_KEY) {
-    if (env.AUTH_TYPE === "bearer-token") {
-      requestHeaders["Authorization"] = \`Bearer \${env.TARGET_API_KEY}\`;
-    } else if (env.AUTH_TYPE === "api-key") {
-      requestHeaders["x-api-key"] = env.TARGET_API_KEY;
-    }
-  }
-
-  // 2. Inject Cloudflare Access Service Token for Zero Trust Tunnels
-  if (env.CF_ACCESS_CLIENT_ID && env.CF_ACCESS_CLIENT_SECRET) {
-    requestHeaders["CF-Access-Client-Id"] = env.CF_ACCESS_CLIENT_ID;
-    requestHeaders["CF-Access-Client-Secret"] = env.CF_ACCESS_CLIENT_SECRET;
-  }
-
-  // 3. Format Request Body
-  let requestBody: string | undefined = undefined;
-  if (options.method !== "GET" && options.method !== "DELETE") {
-    if (options.body) {
-      requestBody = typeof options.body === "string" ? options.body : JSON.stringify(options.body);
-      if (!requestHeaders["Content-Type"]) {
-        requestHeaders["Content-Type"] = "application/json";
-      }
-    }
-  }
-
-  const response = await fetch(targetUrl.toString(), {
-    method: options.method,
-    headers: requestHeaders,
-    body: requestBody,
-  });
-
-  const contentType = response.headers.get("content-type") || "";
-
-  if (!response.ok) {
-    const errorText = await response.text();
-    throw new Error(
-      \`Target API (\${targetUrl.host}) responded with HTTP \${response.status}: \${errorText.slice(0, 300)}\`
-    );
-  }
-
-  if (contentType.includes("application/json")) {
-    return await response.json();
-  } else {
-    return await response.text();
-  }
-}
-`
+      content: targetTsContent
     },
     {
       path: "src/types.ts",

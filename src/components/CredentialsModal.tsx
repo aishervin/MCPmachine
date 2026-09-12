@@ -11,6 +11,9 @@ import {
   ExternalLink,
   Shield,
   Sparkles,
+  Lock,
+  Unlock,
+  Code,
 } from "lucide-react";
 import { UserCredentials } from "../types";
 
@@ -203,6 +206,79 @@ export const CredentialsModal: React.FC<CredentialsModalProps> = ({
                 )}
               </div>
             )}
+
+            {/* Repository Privacy & Hardcoding Settings */}
+            <div className="pt-2 border-t border-stone-800/80 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] font-semibold text-stone-300 flex items-center gap-1.5">
+                  <Shield className="w-3.5 h-3.5 text-orange-400" />
+                  <span>{lang === "fa" ? "نوع مخزن گیت‌هاب (پیش‌فرض: خصوصی / Private):" : "GitHub Repository Visibility:"}</span>
+                </span>
+                <div className="flex items-center gap-1 p-0.5 bg-stone-900 rounded-lg border border-stone-800">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const isPriv = true;
+                      const updated = { ...formData, isPrivate: isPriv };
+                      setFormData(updated);
+                      onSaveCredentials(updated);
+                    }}
+                    className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
+                      formData.isPrivate !== false
+                        ? "bg-orange-500/20 text-orange-400 border border-orange-500/40 shadow-sm"
+                        : "text-stone-400 hover:text-stone-200"
+                    }`}
+                  >
+                    <Lock className="w-3 h-3" />
+                    <span>{lang === "fa" ? "خصوصی (Private)" : "Private"}</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const isPriv = false;
+                      const updated = { ...formData, isPrivate: isPriv, hardcodeSecrets: false };
+                      setFormData(updated);
+                      onSaveCredentials(updated);
+                    }}
+                    className={`flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all ${
+                      formData.isPrivate === false
+                        ? "bg-stone-700 text-stone-100 border border-stone-600"
+                        : "text-stone-400 hover:text-stone-200"
+                    }`}
+                  >
+                    <Unlock className="w-3 h-3" />
+                    <span>{lang === "fa" ? "عمومی (Public)" : "Public"}</span>
+                  </button>
+                </div>
+              </div>
+
+              {/* Hardcode Secrets option for private repos */}
+              <div className="flex items-start gap-2 pt-1">
+                <input
+                  type="checkbox"
+                  id="hardcodeSecrets"
+                  checked={formData.hardcodeSecrets !== false && formData.isPrivate !== false}
+                  disabled={formData.isPrivate === false}
+                  onChange={(e) => {
+                    const updated = { ...formData, hardcodeSecrets: e.target.checked };
+                    setFormData(updated);
+                    onSaveCredentials(updated);
+                  }}
+                  className="mt-0.5 rounded border-stone-700 text-orange-500 focus:ring-orange-400 bg-stone-900"
+                />
+                <label htmlFor="hardcodeSecrets" className="text-[11px] text-stone-300 select-none cursor-pointer">
+                  <span className="font-semibold text-orange-300 flex items-center gap-1">
+                    <Code className="w-3 h-3" />
+                    {lang === "fa" ? "هاردکد خودکار توکن‌ها درون کد Worker (سریع‌تر و سبک‌تر)" : "Auto-hardcode tokens in Worker (Fastest)"}
+                  </span>
+                  <span className="block text-[10px] text-stone-500">
+                    {lang === "fa"
+                      ? "چون مخزن خصوصی (Private) ساخته می‌شود، توکن‌ها مستقیماً در متغیرهای فایل ورکر قرار می‌گیرند تا بدون نیاز به پیکربندی Secrets در کلودفلر، سیستم با حداکثر سرعت کار کند."
+                      : "Embeds tokens directly into private worker code for lightweight, instant execution without manual Cloudflare secret setup."}
+                  </span>
+                </label>
+              </div>
+            </div>
           </div>
 
           {/* Cloudflare Token & Account ID */}

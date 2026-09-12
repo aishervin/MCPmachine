@@ -35,6 +35,8 @@ export interface UserCredentials {
   geminiToken?: string;
   repoName?: string;
   workerName?: string;
+  isPrivate?: boolean; // Default true (private repository)
+  hardcodeSecrets?: boolean; // Hardcode secrets into worker file for private repo
 }
 
 export interface DeploymentLogStep {

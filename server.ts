@@ -646,6 +646,135 @@ app.post("/api/cloudflare/deploy-worker", async (req, res) => {
   }
 });
 
+// Operational Agent Tool: Retrieve GitHub Commits / Workflow Run Logs
+app.post("/api/agent/logs/github", async (req, res) => {
+  const { githubToken, repoName } = req.body;
+  if (!githubToken) {
+    return res.status(400).json({ error: "Missing GitHub Token" });
+  }
+  try {
+    const userRes = await fetch("https://api.github.com/user", {
+      headers: {
+        Authorization: `Bearer ${githubToken}`,
+        "User-Agent": "Cloudflare-Worker-MCP-Agent/1.0",
+        Accept: "application/vnd.github.v3+json",
+      },
+    });
+    if (!userRes.ok) throw new Error("GitHub Authentication failed");
+    const user = await userRes.json();
+    const owner = user.login;
+    const cleanRepoName = (repoName || "mcp-api-bridge-worker").toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+
+    // Fetch recent commits
+    const commitsRes = await fetch(`https://api.github.com/repos/${owner}/${cleanRepoName}/commits?per_page=5`, {
+      headers: {
+        Authorization: `Bearer ${githubToken}`,
+        "User-Agent": "Cloudflare-Worker-MCP-Agent/1.0",
+        Accept: "application/vnd.github.v3+json",
+      },
+    });
+
+    const commits = commitsRes.ok ? await commitsRes.json() : [];
+
+    // Fetch workflow runs if any
+    const runsRes = await fetch(`https://api.github.com/repos/${owner}/${cleanRepoName}/actions/runs?per_page=5`, {
+      headers: {
+        Authorization: `Bearer ${githubToken}`,
+        "User-Agent": "Cloudflare-Worker-MCP-Agent/1.0",
+        Accept: "application/vnd.github.v3+json",
+      },
+    });
+    const runs = runsRes.ok ? await runsRes.json() : { workflow_runs: [] };
+
+    res.json({
+      success: true,
+      repo: `${owner}/${cleanRepoName}`,
+      commits: Array.isArray(commits)
+        ? commits.map((c: any) => ({
+            sha: c.sha?.substring(0, 7),
+            message: c.commit?.message,
+            author: c.commit?.author?.name,
+            date: c.commit?.author?.date,
+          }))
+        : [],
+      workflowRuns: runs.workflow_runs?.map((r: any) => ({
+        id: r.id,
+        name: r.name,
+        status: r.status,
+        conclusion: r.conclusion,
+        html_url: r.html_url,
+      })) || [],
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to fetch GitHub logs" });
+  }
+});
+
+// Operational Agent Tool: Retrieve Cloudflare Worker Deployments & Live Health Logs
+app.post("/api/agent/logs/cloudflare", async (req, res) => {
+  const { cloudflareToken, cloudflareAccountId, scriptName } = req.body;
+  if (!cloudflareToken || !cloudflareAccountId) {
+    return res.status(400).json({ error: "Missing Cloudflare Token or Account ID" });
+  }
+  const cleanScriptName = (scriptName || "mcp-api-bridge-worker").toLowerCase().replace(/[^a-z0-9_-]/g, "-");
+
+  try {
+    // 1. Fetch deployment history from Cloudflare Workers API
+    const depRes = await fetch(
+      `https://api.cloudflare.com/client/v4/accounts/${cloudflareAccountId}/workers/scripts/${cleanScriptName}/deployments`,
+      {
+        headers: {
+          Authorization: `Bearer ${cloudflareToken}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+    const depData = depRes.ok ? await depRes.json() : { result: { deployments: [] } };
+
+    // 2. Fetch subdomain to perform live health probe
+    let subdomain = "subdomain";
+    try {
+      const subRes = await fetch(
+        `https://api.cloudflare.com/client/v4/accounts/${cloudflareAccountId}/workers/subdomain`,
+        {
+          headers: { Authorization: `Bearer ${cloudflareToken}` },
+        }
+      );
+      if (subRes.ok) {
+        const subData = await subRes.json();
+        subdomain = subData.result?.subdomain || "workers";
+      }
+    } catch {}
+
+    const healthUrl = `https://${cleanScriptName}.${subdomain}.workers.dev/health`;
+    let liveHealth: any = null;
+    try {
+      const healthRes = await fetch(healthUrl, { method: "GET" });
+      liveHealth = {
+        statusCode: healthRes.status,
+        statusText: healthRes.statusText,
+        ok: healthRes.ok,
+        body: await healthRes.json().catch(() => null),
+      };
+    } catch (hErr: any) {
+      liveHealth = {
+        ok: false,
+        error: hErr.message || "Failed to reach live worker endpoint",
+      };
+    }
+
+    res.json({
+      success: true,
+      scriptName: cleanScriptName,
+      healthUrl,
+      liveHealth,
+      deployments: depData.result?.deployments || depData.result || [],
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message || "Failed to fetch Cloudflare logs" });
+  }
+});
+
 // Vite Middleware integration for Full-Stack Applet
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
