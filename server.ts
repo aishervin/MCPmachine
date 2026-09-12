@@ -122,29 +122,15 @@ CORE CAPABILITIES & RESPONSIBILITIES:
       });
     }
 
-    // Try primary model (gemini-3.8-flash) with fallback
-    let response;
-    try {
-      response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents,
-        config: {
-          systemInstruction,
-          temperature: 0.7,
-        },
-      });
-    } catch (primaryErr: any) {
-      console.warn("Primary model gemini-3.8-flash failed, attempting fallback:", primaryErr?.message);
-      // Fallback to gemini-3.1-flash-lite or gemini-2.5-flash
-      response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite",
-        contents,
-        config: {
-          systemInstruction,
-          temperature: 0.7,
-        },
-      });
-    }
+    // Use gemini-3.1-flash-lite strictly as configured
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-lite",
+      contents,
+      config: {
+        systemInstruction,
+        temperature: 0.7,
+      },
+    });
 
     res.json({
       text: response.text || "No response generated.",
@@ -198,24 +184,13 @@ Return a valid JSON object matching this schema:
 
 Respond ONLY with valid JSON. No markdown backticks.`;
 
-    let response;
-    try {
-      response = await ai.models.generateContent({
-        model: "gemini-3.8-flash",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-        },
-      });
-    } catch {
-      response = await ai.models.generateContent({
-        model: "gemini-3.1-flash-lite",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-        },
-      });
-    }
+    const response = await ai.models.generateContent({
+      model: "gemini-3.1-flash-lite",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+      },
+    });
 
     const jsonText = response.text || "{}";
     const parsed = JSON.parse(jsonText);
@@ -409,20 +384,15 @@ app.post("/api/verify/credentials", async (req, res) => {
     try {
       const testAi = getGeminiClient(geminiToken);
       const testResp = await testAi.models.generateContent({
-        model: "gemini-3.8-flash",
+        model: "gemini-3.1-flash-lite",
         contents: "test",
-      }).catch(async () => {
-        return await testAi.models.generateContent({
-          model: "gemini-3.1-flash-lite",
-          contents: "test",
-        });
       });
 
       if (testResp && testResp.text) {
         results.gemini = {
           valid: true,
           status: "active",
-          model: "gemini-3.8-flash / 3.1-flash-lite",
+          model: "gemini-3.1-flash-lite",
         };
       } else {
         results.gemini = {

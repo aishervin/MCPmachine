@@ -209,27 +209,94 @@ Wraps your AI endpoints with secret token injection into standard MCP tools.`;
     setLoading(true);
 
     try {
-      const res = await fetch("/api/architect/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: [
-            ...messages.map((m) => ({ role: m.sender === "agent" ? "assistant" : "user", content: m.text })),
-            { role: "user", content: userText },
-          ],
-          currentTools: tools,
-          activePreset,
-          geminiToken: credentials.geminiToken || undefined,
-        }),
-      });
+      let agentReply = "";
 
-      const data = await res.json().catch(() => ({}));
+      // 1. Try backend endpoint first
+      let usedDirectFallback = false;
+      try {
+        const res = await fetch("/api/architect/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: [
+              ...messages.map((m) => ({ role: m.sender === "agent" ? "assistant" : "user", content: m.text })),
+              { role: "user", content: userText },
+            ],
+            currentTools: tools,
+            activePreset,
+            geminiToken: credentials.geminiToken || undefined,
+          }),
+        });
 
-      if (!res.ok) {
-        throw new Error(data.error || `سرور با کد وضعیت ${res.status} پاسخ داد.`);
+        // Check if server returned 404 / 405 (static host like Cloudflare Pages without Node backend)
+        if (res.status === 404 || res.status === 405) {
+          usedDirectFallback = true;
+        } else {
+          const data = await res.json().catch(() => ({}));
+          if (!res.ok) {
+            throw new Error(data.error || `سرور با کد وضعیت ${res.status} پاسخ داد.`);
+          }
+          agentReply = data.text || "";
+        }
+      } catch (networkErr: any) {
+        // If 405 or fetch fails, fallback to direct Gemini client if key is present
+        if (credentials.geminiToken) {
+          usedDirectFallback = true;
+        } else {
+          throw networkErr;
+        }
       }
 
-      const agentReply = data.text || "پاسخی دریافت نشد.";
+      // 2. Direct Gemini 3.1 Flash Lite fallback when deployed on Cloudflare Pages static hosting
+      if (usedDirectFallback) {
+        if (!credentials.geminiToken) {
+          throw new Error(
+            lang === "fa"
+              ? "این برنامه روی هاست استاتیک کلودفلر (Pages) مستقر است. لطفاً ابتدا از بخش «مدیریت توکن‌ها» کلید Gemini API خود را وارد کنید تا چت با مدل 3.1 flash lite برقرار شود."
+              : "App is running on static Cloudflare Pages. Please add your Gemini API key in 'Credentials' to enable the Gemini 3.1 Flash Lite agent."
+          );
+        }
+
+        const systemInstructionText = `شما معمار ارشد ابری و طراح سرورهای MCP (Model Context Protocol) برای پروژه SHΞN™ MCP Server هستید.
+پاسخ‌های خود را با دقت، راهنمایی گام‌به‌گام و زبان فارسی روان و حرفه‌ای ارائه دهید.
+هدف کمک به کاربر برای اتصال گیت‌هاب، هوش مصنوعی و APIهای اختصاصی به کلودفلر ورکر و تبدیل آنها به ابزارهای استاندارد MCP است.`;
+
+        const geminiHistory = [
+          ...messages.map((m) => ({
+            role: m.sender === "agent" ? "model" : "user",
+            parts: [{ text: m.text }],
+          })),
+          { role: "user", parts: [{ text: userText }] },
+        ];
+
+        const directUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${encodeURIComponent(
+          credentials.geminiToken.trim()
+        )}`;
+
+        const geminiRes = await fetch(directUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            systemInstruction: { parts: [{ text: systemInstructionText }] },
+            contents: geminiHistory,
+            generationConfig: {
+              temperature: 0.7,
+            },
+          }),
+        });
+
+        const geminiData = await geminiRes.json().catch(() => ({}));
+        if (!geminiRes.ok) {
+          const errMsg = geminiData.error?.message || `HTTP ${geminiRes.status}`;
+          throw new Error(`خطای Gemini API (مدل gemini-3.1-flash-lite): ${errMsg}`);
+        }
+
+        agentReply = geminiData.candidates?.[0]?.content?.parts?.[0]?.text || "پاسخی دریافت نشد.";
+      }
+
+      if (!agentReply) {
+        agentReply = "پاسخی دریافت نشد.";
+      }
 
       setMessages((prev) => [
         ...prev,

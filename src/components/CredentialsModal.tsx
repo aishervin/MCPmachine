@@ -46,6 +46,7 @@ export const CredentialsModal: React.FC<CredentialsModalProps> = ({
     setVerifying(true);
     setVerifyStatus(null);
     try {
+      let data: any = {};
       const res = await fetch("/api/verify/credentials", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -55,8 +56,55 @@ export const CredentialsModal: React.FC<CredentialsModalProps> = ({
           cloudflareAccountId: formData.cloudflareAccountId,
           geminiToken: formData.geminiToken,
         }),
-      });
-      const data = await res.json().catch(() => ({}));
+      }).catch(() => null);
+
+      if (res && res.ok) {
+        data = await res.json().catch(() => ({}));
+      } else {
+        // If deployed on Cloudflare Pages static hosting (404/405), test directly in browser!
+        if (formData.geminiToken) {
+          try {
+            const directUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${encodeURIComponent(
+              formData.geminiToken.trim()
+            )}`;
+            const gRes = await fetch(directUrl, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                contents: [{ role: "user", parts: [{ text: "ping" }] }],
+              }),
+            });
+            const gData = await gRes.json().catch(() => ({}));
+            if (gRes.ok) {
+              data.gemini = { valid: true, status: "active", model: "gemini-3.1-flash-lite" };
+            } else {
+              data.gemini = { valid: false, error: gData.error?.message || `HTTP ${gRes.status}` };
+            }
+          } catch (ge: any) {
+            data.gemini = { valid: false, error: ge.message };
+          }
+        }
+
+        if (formData.githubToken) {
+          try {
+            const ghRes = await fetch("https://api.github.com/user", {
+              headers: {
+                Authorization: `Bearer ${formData.githubToken}`,
+                Accept: "application/vnd.github.v3+json",
+              },
+            });
+            if (ghRes.ok) {
+              const gh = await ghRes.json();
+              data.github = { valid: true, username: gh.login };
+            } else {
+              data.github = { valid: false, error: `HTTP ${ghRes.status}` };
+            }
+          } catch (ghe: any) {
+            data.github = { valid: false, error: ghe.message };
+          }
+        }
+      }
+
       setVerifyStatus(data);
     } catch (err: any) {
       setVerifyStatus({ error: err.message });
