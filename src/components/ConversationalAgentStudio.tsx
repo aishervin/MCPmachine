@@ -261,13 +261,24 @@ Wraps your AI endpoints with secret token injection into standard MCP tools.`;
 پاسخ‌های خود را با دقت، راهنمایی گام‌به‌گام و زبان فارسی روان و حرفه‌ای ارائه دهید.
 هدف کمک به کاربر برای اتصال گیت‌هاب، هوش مصنوعی و APIهای اختصاصی به کلودفلر ورکر و تبدیل آنها به ابزارهای استاندارد MCP است.`;
 
-        const geminiHistory = [
-          ...messages.map((m) => ({
-            role: m.sender === "agent" ? "model" : "user",
-            parts: [{ text: m.text }],
-          })),
-          { role: "user", parts: [{ text: userText }] },
-        ];
+        // Format conversation history to strictly valid Gemini contents format
+        const cleanHistory: { role: string; parts: { text: string }[] }[] = [];
+        for (const m of messages) {
+          if (!m.text) continue;
+          const role = m.sender === "agent" ? "model" : "user";
+          // Avoid duplicate consecutive identical roles if any
+          if (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].role === role) {
+            cleanHistory[cleanHistory.length - 1].parts[0].text += `\n\n${m.text}`;
+          } else {
+            cleanHistory.push({ role, parts: [{ text: m.text }] });
+          }
+        }
+        // Always ensure the final message is the current user text
+        if (cleanHistory.length > 0 && cleanHistory[cleanHistory.length - 1].role === "user") {
+          cleanHistory[cleanHistory.length - 1].parts[0].text += `\n\n${userText}`;
+        } else {
+          cleanHistory.push({ role: "user", parts: [{ text: userText }] });
+        }
 
         const directUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent?key=${encodeURIComponent(
           credentials.geminiToken.trim()
@@ -278,7 +289,7 @@ Wraps your AI endpoints with secret token injection into standard MCP tools.`;
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             systemInstruction: { parts: [{ text: systemInstructionText }] },
-            contents: geminiHistory,
+            contents: cleanHistory,
             generationConfig: {
               temperature: 0.7,
             },
