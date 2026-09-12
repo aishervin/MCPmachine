@@ -1,0 +1,67 @@
+@import "tailwindcss";
+
+@layer base {
+  body {
+    font-family: 'Vazirmatn', 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+    background-color: #0b0c10;
+    color: #e5e7eb;
+  }
+  code, pre, kbd {
+    font-family: 'Fira Code', ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  }
+}
+
+/* Custom Black & Orange Neumorphism Utilities */
+.neu-flat {
+  background: #12141a;
+  box-shadow: 6px 6px 14px #07080a, -5px -5px 12px #1d212b;
+  border: 1px solid rgba(255, 255, 255, 0.03);
+}
+
+.neu-convex {
+  background: linear-gradient(145deg, #161921, #101217);
+  box-shadow: 6px 6px 16px #07080a, -5px -5px 14px #1f232d;
+  border: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.neu-inset {
+  background: #0d0f14;
+  box-shadow: inset 4px 4px 10px #060709, inset -4px -4px 10px #181b22;
+  border: 1px solid rgba(255, 255, 255, 0.02);
+}
+
+.neu-orange-glow {
+  box-shadow: 0 0 20px rgba(249, 115, 22, 0.25), inset 0 0 10px rgba(249, 115, 22, 0.15);
+}
+
+.neu-btn {
+  background: linear-gradient(145deg, #181b23, #111319);
+  box-shadow: 4px 4px 10px #07080b, -4px -4px 10px #20242f;
+  transition: all 0.2s ease;
+}
+
+.neu-btn:hover {
+  background: linear-gradient(145deg, #1c202a, #13151c);
+  box-shadow: 5px 5px 12px #06070a, -5px -5px 12px #242935;
+}
+
+.neu-btn:active {
+  box-shadow: inset 3px 3px 8px #07080b, inset -3px -3px 8px #1f232e;
+}
+
+.neu-btn-primary {
+  background: linear-gradient(135deg, #ea580c 0%, #f97316 50%, #fb923c 100%);
+  box-shadow: 0 4px 15px rgba(249, 115, 22, 0.4), inset 0 1px 1px rgba(255, 255, 255, 0.3);
+  transition: all 0.2s ease;
+}
+
+.neu-btn-primary:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 6px 20px rgba(249, 115, 22, 0.55), inset 0 1px 1px rgba(255, 255, 255, 0.4);
+}
+
+.neu-btn-primary:active {
+  transform: translateY(1px);
+  box-shadow: 0 2px 10px rgba(249, 115, 22, 0.3);
+}
+

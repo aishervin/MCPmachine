@@ -1,0 +1,6 @@
+{
+  "name": "SHΞN™ MCP Server",
+  "description": "Interactive AI Architect & 1-Click Serverless Bridge Generator to expose GitHub, AI models, and APIs as standard MCP Tools on Cloudflare Workers. Exclusive SHΞN™ made.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
