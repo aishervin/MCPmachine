@@ -219,10 +219,16 @@ Wraps your AI endpoints with secret token injection into standard MCP tools.`;
           ],
           currentTools: tools,
           activePreset,
+          geminiToken: credentials.geminiToken || undefined,
         }),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        throw new Error(data.error || `سرور با کد وضعیت ${res.status} پاسخ داد.`);
+      }
+
       const agentReply = data.text || "پاسخی دریافت نشد.";
 
       setMessages((prev) => [

@@ -53,9 +53,10 @@ export const CredentialsModal: React.FC<CredentialsModalProps> = ({
           githubToken: formData.githubToken,
           cloudflareToken: formData.cloudflareToken,
           cloudflareAccountId: formData.cloudflareAccountId,
+          geminiToken: formData.geminiToken,
         }),
       });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       setVerifyStatus(data);
     } catch (err: any) {
       setVerifyStatus({ error: err.message });
@@ -223,14 +224,30 @@ export const CredentialsModal: React.FC<CredentialsModalProps> = ({
               type={showTokens ? "text" : "password"}
               value={formData.geminiToken || ""}
               onChange={(e) => handleChange("geminiToken", e.target.value)}
-              placeholder="AIzaSy... یا sk-..."
+              placeholder="AQ... یا AIzaSy... یا sk-..."
               className="w-full px-3 py-2 bg-stone-950/80 border border-stone-800 rounded-lg text-orange-300 font-mono text-xs focus:border-orange-500 focus:outline-none"
             />
             <p className="text-[10px] text-stone-500">
               {lang === "fa"
-                ? "جهت تزریق به عنوان AI_API_KEY در ورکر کلودفلر در سناریوی تبدیل هوش مصنوعی به سرور MCP"
-                : "Injected as AI_API_KEY on the worker when wrapping an AI model into an MCP tool"}
+                ? "پشتیبانی کامل از قالب جدید کلیدهای جمینای (AQ...) و هوش مصنوعی. برای مکالمه با ایجنت و تزریق در ورکر کلودفلر استفاده می‌شود."
+                : "Supports all Gemini key formats (AQ... / AIzaSy...). Used for architect agent chat and Cloudflare Worker AI relay."}
             </p>
+
+            {verifyStatus?.gemini && (
+              <div className="text-[11px] pt-1">
+                {verifyStatus.gemini.valid ? (
+                  <span className="text-emerald-400 flex items-center gap-1">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>{lang === "fa" ? `کلید جمینای تایید شد (${verifyStatus.gemini.model})` : `Gemini Key Verified (${verifyStatus.gemini.model})`}</span>
+                  </span>
+                ) : (
+                  <span className="text-red-400 flex items-center gap-1">
+                    <AlertCircle className="w-3.5 h-3.5" />
+                    <span>{lang === "fa" ? `خطای کلید جمینای: ${verifyStatus.gemini.error}` : `Gemini Error: ${verifyStatus.gemini.error}`}</span>
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -239,7 +256,7 @@ export const CredentialsModal: React.FC<CredentialsModalProps> = ({
           <button
             type="button"
             onClick={handleVerify}
-            disabled={verifying || (!formData.githubToken && !formData.cloudflareToken)}
+            disabled={verifying || (!formData.githubToken && !formData.cloudflareToken && !formData.geminiToken)}
             className="neu-btn px-4 py-2.5 rounded-xl text-stone-300 hover:text-white text-xs font-semibold flex items-center gap-1.5 disabled:opacity-40"
           >
             <CheckCircle2 className="w-4 h-4 text-emerald-400" />

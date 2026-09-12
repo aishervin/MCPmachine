@@ -11,15 +11,34 @@ const PORT = 3000;
 
 app.use(express.json({ limit: "5mb" }));
 
-// Lazy initialize Gemini client to avoid crashes if key is not configured
-let geminiClient: GoogleGenAI | null = null;
-function getGeminiClient(): GoogleGenAI {
-  if (!geminiClient) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not configured in server environment.");
-    }
-    geminiClient = new GoogleGenAI({
+// Initialize Gemini client with custom key or fallback to environment variable
+let defaultGeminiClient: GoogleGenAI | null = null;
+
+function getGeminiClient(customApiKey?: string): GoogleGenAI {
+  const cleanCustomKey = (customApiKey || "").trim();
+  const apiKey = cleanCustomKey || process.env.GEMINI_API_KEY;
+
+  if (!apiKey) {
+    throw new Error(
+      "کلید API جمینای تنظیم نشده است. لطفاً کلید API خود را در بخش «مدیریت توکن‌ها» وارد کرده و دکمه تست را بزنید."
+    );
+  }
+
+  // If a custom key is provided per request, create a fresh instance
+  if (cleanCustomKey) {
+    return new GoogleGenAI({
+      apiKey: cleanCustomKey,
+      httpOptions: {
+        headers: {
+          "User-Agent": "aistudio-build",
+        },
+      },
+    });
+  }
+
+  // Otherwise reuse default client
+  if (!defaultGeminiClient) {
+    defaultGeminiClient = new GoogleGenAI({
       apiKey,
       httpOptions: {
         headers: {
@@ -28,7 +47,7 @@ function getGeminiClient(): GoogleGenAI {
       },
     });
   }
-  return geminiClient;
+  return defaultGeminiClient;
 }
 
 // Health check endpoint
@@ -44,7 +63,7 @@ app.get("/api/health", (req, res) => {
 // Architectural Chat & Discovery endpoint
 app.post("/api/architect/chat", async (req, res) => {
   try {
-    const { messages, currentTools, tunnelConfig } = req.body;
+    const { messages, currentTools, tunnelConfig, geminiToken } = req.body;
 
     const systemInstruction = `You are the Senior Cloud & Integration Architect and Automated Deployment Specialist for "SHΞN™ MCP Server" (created by Exclusive SHΞN™ made, Telegram: @shervini).
 
@@ -84,7 +103,7 @@ CORE CAPABILITIES & RESPONSIBILITIES:
    - If addressed in Persian (Farsi), respond in fluent, polite, clear, friendly Persian with bullet points.
    - If addressed in English, respond in articulate, professional English.`;
 
-    const ai = getGeminiClient();
+    const ai = getGeminiClient(geminiToken);
 
     // Prepare contents for Gemini
     const contents = (messages || []).map((m: { role: string; content: string }) => ({
@@ -103,14 +122,29 @@ CORE CAPABILITIES & RESPONSIBILITIES:
       });
     }
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents,
-      config: {
-        systemInstruction,
-        temperature: 0.7,
-      },
-    });
+    // Try primary model (gemini-3.8-flash) with fallback
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents,
+        config: {
+          systemInstruction,
+          temperature: 0.7,
+        },
+      });
+    } catch (primaryErr: any) {
+      console.warn("Primary model gemini-3.8-flash failed, attempting fallback:", primaryErr?.message);
+      // Fallback to gemini-3.1-flash-lite or gemini-2.5-flash
+      response = await ai.models.generateContent({
+        model: "gemini-3.1-flash-lite",
+        contents,
+        config: {
+          systemInstruction,
+          temperature: 0.7,
+        },
+      });
+    }
 
     res.json({
       text: response.text || "No response generated.",
@@ -126,9 +160,9 @@ CORE CAPABILITIES & RESPONSIBILITIES:
 // Auto-generate / convert API to MCP Tool Schema endpoint
 app.post("/api/architect/convert", async (req, res) => {
   try {
-    const { apiType, rawInput, serviceName } = req.body;
+    const { apiType, rawInput, serviceName, geminiToken } = req.body;
 
-    const ai = getGeminiClient();
+    const ai = getGeminiClient(geminiToken);
 
     const prompt = `You are an expert MCP (Model Context Protocol) architect.
 Convert the following ${apiType} definition or snippet into one or more MCP Tool declarations.
@@ -164,13 +198,24 @@ Return a valid JSON object matching this schema:
 
 Respond ONLY with valid JSON. No markdown backticks.`;
 
-    const response = await ai.models.generateContent({
-      model: "gemini-3.8-flash",
-      contents: prompt,
-      config: {
-        responseMimeType: "application/json",
-      },
-    });
+    let response;
+    try {
+      response = await ai.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+        },
+      });
+    } catch {
+      response = await ai.models.generateContent({
+        model: "gemini-3.1-flash-lite",
+        contents: prompt,
+        config: {
+          responseMimeType: "application/json",
+        },
+      });
+    }
 
     const jsonText = response.text || "{}";
     const parsed = JSON.parse(jsonText);
@@ -303,9 +348,9 @@ app.post("/api/simulate/mcp", (req, res) => {
   });
 });
 
-// Verify credentials (GitHub & Cloudflare)
+// Verify credentials (GitHub, Cloudflare, and Gemini/AI)
 app.post("/api/verify/credentials", async (req, res) => {
-  const { githubToken, cloudflareToken, cloudflareAccountId } = req.body;
+  const { githubToken, cloudflareToken, cloudflareAccountId, geminiToken } = req.body;
   const results: any = {};
 
   if (githubToken) {
@@ -357,6 +402,39 @@ app.post("/api/verify/credentials", async (req, res) => {
       }
     } catch (e: any) {
       results.cloudflare = { valid: false, error: e.message };
+    }
+  }
+
+  if (geminiToken) {
+    try {
+      const testAi = getGeminiClient(geminiToken);
+      const testResp = await testAi.models.generateContent({
+        model: "gemini-3.8-flash",
+        contents: "test",
+      }).catch(async () => {
+        return await testAi.models.generateContent({
+          model: "gemini-3.1-flash-lite",
+          contents: "test",
+        });
+      });
+
+      if (testResp && testResp.text) {
+        results.gemini = {
+          valid: true,
+          status: "active",
+          model: "gemini-3.8-flash / 3.1-flash-lite",
+        };
+      } else {
+        results.gemini = {
+          valid: false,
+          error: "پاسخی از مدل جمینای دریافت نشد.",
+        };
+      }
+    } catch (e: any) {
+      results.gemini = {
+        valid: false,
+        error: e.message || "کلید نامعتبر است یا دسترسی به مدل محدود شده است.",
+      };
     }
   }
 
